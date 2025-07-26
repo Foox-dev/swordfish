@@ -23,15 +23,13 @@
 
 #define MAX_MATCHES 1024
 
-typedef struct
-{
+typedef struct {
     pid_t pid;
     char name[256];
     char owner[64];
 } proc_entry_t;
 
-typedef struct
-{
+typedef struct {
     const char *sig_str;
     int sig;
     bool do_kill;
@@ -44,8 +42,7 @@ typedef struct
     int pattern_start_idx;
 } swordfish_args_t;
 
-void usage(const char *prog)
-{
+void usage(const char *prog) {
     fprintf(stderr,
             "Swordfish : A pkill-like CLI tool\n"
             "Usage: %s -[SNkxypsu:] pattern [pattern ...]\n"
@@ -61,8 +58,7 @@ void usage(const char *prog)
             prog);
 }
 
-void help(const char *prog)
-{
+void help(const char *prog) {
     printf(
         "Swordfish : A pkill-like CLI tool\n\n"
         "Usage:\n"
@@ -88,27 +84,23 @@ void help(const char *prog)
         prog, prog, prog, prog, prog);
 }
 
-bool is_numeric(const char *s)
-{
-    while (*s)
-    {
+bool is_numeric(const char *s) {
+    while (*s) {
         if (!isdigit(*s++))
             return false;
     }
     return true;
 }
 
-int get_signal(const char *sigstr)
-{
-    if (is_numeric(sigstr))
-    {
+int get_signal(const char *sigstr) {
+    if (is_numeric(sigstr)) {
         int signum = atoi(sigstr);
         if (signum > 0 && signum < NSIG)
             return signum;
         return -1;
     }
-    struct
-    {
+
+    struct {
         const char *name;
         int sig;
     } signals[] = {
@@ -122,54 +114,46 @@ int get_signal(const char *sigstr)
         {"STOP", SIGSTOP},
         {"CONT", SIGCONT},
     };
-    for (size_t i = 0; i < sizeof(signals) / sizeof(*signals); i++)
-    {
+
+    for (size_t i = 0; i < sizeof(signals) / sizeof(*signals); i++) {
         if (strcasecmp(sigstr, signals[i].name) == 0)
             return signals[i].sig;
     }
     return -1;
 }
 
-bool substring_match(const char *haystack, const char *needle)
-{
+bool substring_match(const char *haystack, const char *needle) {
     return strcasestr(haystack, needle) != NULL;
 }
 
-bool is_proc_dir(const char *name)
-{
+bool is_proc_dir(const char *name) {
     for (const char *p = name; *p; p++)
         if (!isdigit(*p))
             return false;
     return true;
 }
 
-void drop_privileges()
-{
-    if (geteuid() == 0)
-    {
+void drop_privileges() {
+    if (geteuid() == 0) {
         uid_t uid = getuid();
         gid_t gid = getgid();
-        if (setgid(gid) != 0 || setuid(uid) != 0)
-        {
+
+        if (setgid(gid) != 0 || setuid(uid) != 0) {
             fprintf(stderr, "Failed to drop privileges: %s\n", strerror(errno));
             exit(2);
         }
     }
 }
 
-const char *get_proc_user(uid_t uid)
-{
+const char *get_proc_user(uid_t uid) {
     struct passwd *pw = getpwuid(uid);
     return pw ? pw->pw_name : "unknown";
 }
 
-int parse_args(int argc, char **argv, swordfish_args_t *args)
-{
+int parse_args(int argc, char **argv, swordfish_args_t *args) {
     // Check for --help before getopt
-    for (int i = 1; i < argc; i++)
-    {
-        if (strcmp(argv[i], "--help") == 0)
-        {
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--help") == 0) {
             help(argv[0]);
             exit(0);
         }
@@ -186,74 +170,69 @@ int parse_args(int argc, char **argv, swordfish_args_t *args)
     args->auto_confirm = false;
     args->user = NULL;
 
-    while ((opt = getopt(argc, argv, "SNkxyps:u:")) != -1)
-    {
-        switch (opt)
-        {
-        case 'S':
-            args->select_mode = true;
-            break;
-        case 'N':
-            args->dry_run = true;
-            break;
-        case 'k':
-            args->do_kill = true;
-            break;
-        case 'x':
-            args->exact_match = true;
-            break;
-        case 'y':
-            args->auto_confirm = true;
-            break;
-        case 'p':
-            args->print_pids_only = true;
-            break;
-        case 's':
-            args->sig_str = optarg;
-            break;
-        case 'u':
-            args->user = optarg;
-            break;
-        default:
-            usage(argv[0]);
-            return 2;
+    while ((opt = getopt(argc, argv, "SNkxyps:u:")) != -1) {
+        switch (opt) {
+            case 'S':
+                args->select_mode = true;
+                break;
+            case 'N':
+                args->dry_run = true;
+                break;
+            case 'k':
+                args->do_kill = true;
+                break;
+            case 'x':
+                args->exact_match = true;
+                break;
+            case 'y':
+                args->auto_confirm = true;
+                break;
+            case 'p':
+                args->print_pids_only = true;
+                break;
+            case 's':
+                args->sig_str = optarg;
+                break;
+            case 'u':
+                args->user = optarg;
+                break;
+            default:
+                usage(argv[0]);
+                return 2;
         }
     }
 
-    if (optind >= argc)
-    {
+    if (optind >= argc) {
         usage(argv[0]);
         return 2;
     }
 
     args->pattern_start_idx = optind;
     args->sig = get_signal(args->sig_str);
-    if (args->sig == -1)
-    {
+
+    if (args->sig == -1) {
         fprintf(stderr, "Unknown signal: %s\n", args->sig_str);
         return 2;
     }
+  
     return 0;
 }
 
-bool pattern_matches(const swordfish_args_t *args, const char *name, char **patterns, int pattern_count)
-{
-    for (int i = 0; i < pattern_count; ++i)
-    {
+bool pattern_matches(const swordfish_args_t *args, const char *name, char **patterns, int pattern_count) {
+    for (int i = 0; i < pattern_count; ++i) {
         if ((args->exact_match && strcasecmp(name, patterns[i]) == 0) ||
-            (!args->exact_match && substring_match(name, patterns[i])))
-        {
+            (!args->exact_match && substring_match(name, patterns[i]))) {
             return true;
         }
     }
+
     return false;
 }
 
-int scan_processes(const swordfish_args_t *args, char **patterns, int pattern_count)
-{
+int scan_processes(const swordfish_args_t *args, char **patterns, int pattern_count) {
     DIR *proc = opendir("/proc");
-    if (!proc)
-    {
+
+    if (!proc) {
         perror("opendir /proc");
         return 2;
     }
@@ -262,8 +241,7 @@ int scan_processes(const swordfish_args_t *args, char **patterns, int pattern_co
     int matched = 0;
     struct dirent *entry;
 
-    while ((entry = readdir(proc)) != NULL)
-    {
+    while ((entry = readdir(proc)) != NULL) {
         if (!is_proc_dir(entry->d_name))
             continue;
 
@@ -275,11 +253,11 @@ int scan_processes(const swordfish_args_t *args, char **patterns, int pattern_co
             continue;
 
         char name[256];
-        if (!fgets(name, sizeof(name), f))
-        {
+        if (!fgets(name, sizeof(name), f)) {
             fclose(f);
             continue;
         }
+
         fclose(f);
         name[strcspn(name, "\n")] = 0;
 
@@ -291,8 +269,8 @@ int scan_processes(const swordfish_args_t *args, char **patterns, int pattern_co
         snprintf(status_path, sizeof(status_path), "/proc/%s/status", entry->d_name);
         uid_t uid = -1;
         FILE *status = fopen(status_path, "r");
-        if (status)
-        {
+    
+        if (status) {
             char line[256];
             while (fgets(line, sizeof(line), status))
             {
@@ -308,8 +286,7 @@ int scan_processes(const swordfish_args_t *args, char **patterns, int pattern_co
         if (args->user && strcasecmp(get_proc_user(uid), args->user) != 0)
             continue;
 
-        if (matched < MAX_MATCHES)
-        {
+        if (matched < MAX_MATCHES) {
             matches[matched].pid = atoi(entry->d_name);
             snprintf(matches[matched].name, sizeof(matches[matched].name), "%s", name);
             snprintf(matches[matched].owner, sizeof(matches[matched].owner), "%s", get_proc_user(uid));
@@ -319,22 +296,19 @@ int scan_processes(const swordfish_args_t *args, char **patterns, int pattern_co
 
     closedir(proc);
 
-    if (args->print_pids_only)
-    {
+    if (args->print_pids_only) {
         for (int i = 0; i < matched; ++i)
             printf("%d\n", matches[i].pid);
         return matched > 0 ? 0 : 1;
     }
 
-    if (matched == 0)
-    {
+    if (matched == 0) {
         fprintf(stderr, "No processes matched.\n");
         return 1;
     }
 
     int selected[MAX_MATCHES], count = 0;
-    if (args->select_mode && !args->auto_confirm)
-    {
+    if (args->select_mode && !args->auto_confirm) {
         printf("Select which processes to act on:\n");
         for (int i = 0; i < matched; ++i)
             printf("[%d] PID %d (%s)\n", i + 1, matches[i].pid, matches[i].name);
@@ -344,34 +318,26 @@ int scan_processes(const swordfish_args_t *args, char **patterns, int pattern_co
         fgets(input, sizeof(input), stdin);
         input[strcspn(input, "\n")] = 0;
 
-        if (strlen(input) == 0)
-        {
+        if (strlen(input) == 0) {
             for (int i = 0; i < matched; ++i)
                 selected[count++] = i;
-        }
-        else
-        {
+        } else {
             char *token = strtok(input, ",");
             while (token && count < matched)
             {
                 char *dash = strchr(token, '-');
-                if (dash)
-                {
+                if (dash) {
                     *dash = '\0';
                     int start = atoi(token);
                     int end = atoi(dash + 1);
-                    if (start > 0 && end >= start)
-                    {
-                        for (int j = start; j <= end && count < matched; ++j)
-                        {
+                    if (start > 0 && end >= start) {
+                        for (int j = start; j <= end && count < matched; ++j) {
                             int idx = j - 1;
                             if (idx >= 0 && idx < matched)
                                 selected[count++] = idx;
                         }
                     }
-                }
-                else
-                {
+                } else {
                     int idx = atoi(token) - 1;
                     if (idx >= 0 && idx < matched)
                         selected[count++] = idx;
@@ -380,8 +346,7 @@ int scan_processes(const swordfish_args_t *args, char **patterns, int pattern_co
             }
         }
     }
-    else
-    {
+    else {
         for (int i = 0; i < matched; ++i)
             selected[count++] = i;
     }
