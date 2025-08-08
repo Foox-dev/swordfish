@@ -10,9 +10,77 @@
 #include <unistd.h>
 #include <errno.h>
 #include <signal.h>
+#include <ctype.h>
+#include <dirent.h>
 
 #include "args.h"
 #include "process.h"
+
+int process_requires_sudo(const char *pattern)
+{
+    DIR *proc = opendir("/proc");
+    if (!proc)
+        return 0; // Fail safe: don’t escalate if can’t open /proc
+
+    uid_t my_uid = geteuid();
+    struct dirent *entry;
+    while ((entry = readdir(proc)) != NULL)
+    {
+        if (!isdigit(entry->d_name[0]))
+            continue;
+
+        char comm_path[512];
+        snprintf(comm_path, sizeof(comm_path), "/proc/%s/comm", entry->d_name);
+
+        FILE *comm_file = fopen(comm_path, "r");
+        if (!comm_file)
+            continue;
+
+        char proc_name[256];
+        if (!fgets(proc_name, sizeof(proc_name), comm_file))
+        {
+            fclose(comm_file);
+            continue;
+        }
+
+        // Remove trailing newline
+        proc_name[strcspn(proc_name, "\n")] = 0;
+        fclose(comm_file);
+
+        if (strcmp(proc_name, pattern) != 0)
+            continue;
+
+        // Check UID
+        char status_path[512];
+        snprintf(status_path, sizeof(status_path), "/proc/%s/status", entry->d_name);
+
+        FILE *status_file = fopen(status_path, "r");
+        if (!status_file)
+            continue;
+
+        uid_t proc_uid = -1;
+        char line[256];
+        while (fgets(line, sizeof(line), status_file))
+        {
+            if (strncmp(line, "Uid:", 4) == 0)
+            {
+                sscanf(line, "Uid:\t%u", &proc_uid);
+                break;
+            }
+        }
+
+        fclose(status_file);
+
+        if (proc_uid != my_uid)
+        {
+            closedir(proc);
+            return 1; // Needs sudo
+        }
+    }
+
+    closedir(proc);
+    return 0; // All matched processes are owned
+}
 
 int main(int argc, char **argv)
 {
@@ -20,8 +88,7 @@ int main(int argc, char **argv)
     if (parse_args(argc, argv, &args) != 0)
         return 2;
 
-    // Auto-sudo if trying to send signals and not root
-    if (args.do_kill && geteuid() != 0)
+    if (args.do_kill && process_requires_sudo(argv[args.pattern_start_idx]))
     {
         if (args.auto_confirm)
         {
@@ -43,7 +110,7 @@ int main(int argc, char **argv)
         }
         else
         {
-            fprintf(stderr, "Warning: Sending signals may require root privileges.\n");
+            fprintf(stderr, "Warning: Some matching processes are not owned by you.\n");
             printf("Rerun with sudo? [y/N]: ");
             char response[8] = {0};
             fgets(response, sizeof(response), stdin);

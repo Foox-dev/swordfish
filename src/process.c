@@ -37,6 +37,32 @@ static bool is_proc_dir(const char *name)
   return true;
 }
 
+bool is_zombie_process(pid_t pid)
+{
+  char status_path[256];
+  snprintf(status_path, sizeof(status_path), "/proc/%d/status", pid);
+
+  FILE *file = fopen(status_path, "r");
+  if (!file)
+    return false; // Assume false if we can't read it
+
+  char line[256];
+  while (fgets(line, sizeof(line), file))
+  {
+    if (strncmp(line, "State:", 6) == 0)
+    {
+      // Format is "State:\tZ (zombie)"
+      char state = 0;
+      sscanf(line, "State:\t%c", &state);
+      fclose(file);
+      return state == 'Z';
+    }
+  }
+
+  fclose(file);
+  return false;
+}
+
 void drop_privileges(void)
 {
   if (geteuid() == 0)
@@ -57,6 +83,48 @@ static const char *get_proc_user(uid_t uid)
   return pw ? pw->pw_name : "unknown";
 }
 
+static const char *get_proc_cmdl(pid_t pid)
+{
+  static char cmdline[256];
+  char cmdline_path[256];
+  snprintf(cmdline_path, sizeof(cmdline_path), "/proc/%d/cmdline", pid);
+  FILE *f = fopen(cmdline_path, "r");
+  if (f)
+  {
+    if (fgets(cmdline, sizeof(cmdline), f))
+    {
+      cmdline[strcspn(cmdline, "\n")] = 0; // Remove newline
+      fclose(f);
+      return cmdline;
+    }
+    fclose(f);
+  }
+  return "unknown";
+}
+
+static const char *get_proc_threads(pid_t pid)
+{
+  static char threads[32];
+  char status_path[256];
+  snprintf(status_path, sizeof(status_path), "/proc/%d/status", pid);
+  FILE *f = fopen(status_path, "r");
+  if (f)
+  {
+    char line[256];
+    while (fgets(line, sizeof(line), f))
+    {
+      if (strncmp(line, "Threads:", 8) == 0)
+      {
+        sscanf(line, "Threads:\t%s", threads);
+        fclose(f);
+        return threads;
+      }
+    }
+    fclose(f);
+  }
+  return "unknown";
+}
+
 static bool pattern_matches(const swordfish_args_t *args, const char *name, char **patterns, int pattern_count)
 {
   for (int i = 0; i < pattern_count; ++i)
@@ -70,15 +138,38 @@ static bool pattern_matches(const swordfish_args_t *args, const char *name, char
   return false;
 }
 
-int scan_processes(const swordfish_args_t *args, char **patterns, int pattern_count)
+// Helper: check if string is all digits
+static bool is_all_digits(const char *s)
+{
+  for (; *s; ++s)
+    if (!isdigit(*s))
+      return false;
+  return *s == '\0';
+}
+
+// Helper: check if entry matches any pattern (PID or name)
+static bool entry_matches(const struct dirent *entry, const char *name, char **patterns, bool *pattern_is_pid, int pattern_count, const swordfish_args_t *args)
+{
+  for (int i = 0; i < pattern_count; ++i)
+  {
+    if (pattern_is_pid[i])
+    {
+      if (strcmp(entry->d_name, patterns[i]) == 0)
+        return true;
+    }
+  }
+  return pattern_matches(args, name, patterns, pattern_count);
+}
+
+// Helper: fill matches array, return number matched
+static int find_matching_processes(const swordfish_args_t *args, char **patterns, int pattern_count, proc_entry_t *matches, bool *pattern_is_pid)
 {
   DIR *proc = opendir("/proc");
   if (!proc)
   {
     perror("opendir /proc");
-    return 2;
+    return -1;
   }
-  proc_entry_t matches[MAX_MATCHES];
   int matched = 0;
   struct dirent *entry;
   while ((entry = readdir(proc)) != NULL)
@@ -98,9 +189,6 @@ int scan_processes(const swordfish_args_t *args, char **patterns, int pattern_co
     }
     fclose(f);
     name[strcspn(name, "\n")] = 0;
-    if (!pattern_matches(args, name, patterns, pattern_count))
-      continue;
-    // Get UID
     char status_path[PATH_MAX];
     snprintf(status_path, sizeof(status_path), "/proc/%s/status", entry->d_name);
     uid_t uid = -1;
@@ -120,15 +208,144 @@ int scan_processes(const swordfish_args_t *args, char **patterns, int pattern_co
     }
     if (args->user && strcasecmp(get_proc_user(uid), args->user) != 0)
       continue;
-    if (matched < MAX_MATCHES)
+    if (entry_matches(entry, name, patterns, pattern_is_pid, pattern_count, args))
     {
-      matches[matched].pid = atoi(entry->d_name);
-      snprintf(matches[matched].name, sizeof(matches[matched].name), "%s", name);
-      snprintf(matches[matched].owner, sizeof(matches[matched].owner), "%s", get_proc_user(uid));
-      matched++;
+      if (matched < MAX_MATCHES)
+      {
+        matches[matched].pid = atoi(entry->d_name);
+        snprintf(matches[matched].name, sizeof(matches[matched].name), "%s", name);
+        snprintf(matches[matched].owner, sizeof(matches[matched].owner), "%s", get_proc_user(uid));
+        matched++;
+      }
     }
   }
   closedir(proc);
+  return matched;
+}
+
+static void select_processes(int matched, proc_entry_t *matches, int *selected, int *count)
+{
+  printf("Select which processes to act on:\n");
+  for (int i = 0; i < matched; ++i)
+    printf("[%d] PID %d (%s)\n", i + 1, matches[i].pid, matches[i].name);
+  printf("Enter numbers (e.g., 1,2,5-7) or leave empty for all: ");
+  char input[256] = {0};
+  fgets(input, sizeof(input), stdin);
+  input[strcspn(input, "\n")] = 0;
+  if (strlen(input) == 0)
+  {
+    for (int i = 0; i < matched; ++i)
+      selected[(*count)++] = i;
+  }
+  else
+  {
+    char *token = strtok(input, ",");
+    while (token && *count < matched)
+    {
+      char *dash = strchr(token, '-');
+      if (dash)
+      {
+        *dash = '\0';
+        int start = atoi(token);
+        int end = atoi(dash + 1);
+        if (start > 0 && end >= start)
+        {
+          for (int j = start; j <= end && *count < matched; ++j)
+          {
+            int idx = j - 1;
+            if (idx >= 0 && idx < matched)
+              selected[(*count)++] = idx;
+          }
+        }
+      }
+      else
+      {
+        int idx = atoi(token) - 1;
+        if (idx >= 0 && idx < matched)
+          selected[(*count)++] = idx;
+      }
+      token = strtok(NULL, ",");
+    }
+  }
+}
+
+static void print_proc_info(const proc_entry_t *proc, int sig, const swordfish_args_t *args, const char *prefix, bool include_signal, bool force_non_verbose)
+{
+  if (args->do_verbose && !force_non_verbose)
+  {
+    if (include_signal)
+      printf("[VERBOSE] %s%d (%s) cmdl (%s) threads (%s) owned by %s [signal %d (%s)]\n", prefix, proc->pid, proc->name, get_proc_cmdl(proc->pid), get_proc_threads(proc->pid), proc->owner, sig, strsignal(sig));
+    else
+      printf("[VERBOSE] %s%d (%s) cmdl (%s) threads (%s) owned by %s\n", prefix, proc->pid, proc->name, get_proc_cmdl(proc->pid), get_proc_threads(proc->pid), proc->owner);
+  }
+  else
+  {
+    if (include_signal)
+      printf("%s%d (%s) owned by %s [signal %d (%s)]\n", prefix, proc->pid, proc->name, proc->owner, sig, strsignal(sig));
+    else
+      printf("%s%d (%s) owned by %s\n", prefix, proc->pid, proc->name, proc->owner);
+  }
+}
+
+static void confirm_and_act(const swordfish_args_t *args, int count, int *selected, proc_entry_t *matches)
+{
+  // Confirmation prompt for killing processes (unless auto_confirm)
+  if (args->do_kill && !args->dry_run && !args->auto_confirm && count > 0)
+  {
+    printf("The following processes will be killed (signal %d - %s):\n", args->sig, strsignal(args->sig));
+    for (int i = 0; i < count; ++i)
+    {
+      int idx = selected[i];
+      print_proc_info(&matches[idx], args->sig, args, "  PID ", false, false);
+    }
+    printf("Proceed? [y/N]: ");
+    char confirm[8] = {0};
+    fgets(confirm, sizeof(confirm), stdin);
+    if (confirm[0] != 'y' && confirm[0] != 'Y')
+    {
+      printf("Aborted.\n");
+      return;
+    }
+  }
+  for (int i = 0; i < count; ++i)
+  {
+    int idx = selected[i];
+    if (is_zombie_process(matches[idx].pid))
+    {
+      printf("PID %d (%s) is a zombie process and may not be killed.\n",
+             matches[idx].pid, matches[idx].name);
+      continue;
+    }
+    if (args->do_kill && !args->dry_run)
+    {
+      if (kill(matches[idx].pid, args->sig) == 0)
+        print_proc_info(&matches[idx], args->sig, args, "Sent signal to ", true, true); // force non-verbose
+      else
+        fprintf(stderr, "Failed to kill PID %d (%s): %s\n",
+                matches[idx].pid, matches[idx].name, strerror(errno));
+    }
+    else if (args->dry_run)
+    {
+      print_proc_info(&matches[idx], args->sig, args, "Would send signal to ", true, true); // force non-verbose
+    }
+    else
+    {
+      print_proc_info(&matches[idx], args->sig, args, "", false, false);
+    }
+  }
+}
+
+int scan_processes(const swordfish_args_t *args, char **patterns, int pattern_count)
+{
+  bool pattern_is_pid[pattern_count];
+  for (int i = 0; i < pattern_count; ++i)
+    pattern_is_pid[i] = is_all_digits(patterns[i]);
+
+  proc_entry_t matches[MAX_MATCHES];
+  int matched = find_matching_processes(args, patterns, pattern_count, matches, pattern_is_pid);
+  if (matched < 0)
+    return 2;
+
   if (args->print_pids_only)
   {
     for (int i = 0; i < matched; ++i)
@@ -143,95 +360,13 @@ int scan_processes(const swordfish_args_t *args, char **patterns, int pattern_co
   int selected[MAX_MATCHES], count = 0;
   if (args->select_mode && !args->auto_confirm)
   {
-    printf("Select which processes to act on:\n");
-    for (int i = 0; i < matched; ++i)
-      printf("[%d] PID %d (%s)\n", i + 1, matches[i].pid, matches[i].name);
-    printf("Enter numbers (e.g., 1,2,5-7) or leave empty for all: ");
-    char input[256] = {0};
-    fgets(input, sizeof(input), stdin);
-    input[strcspn(input, "\n")] = 0;
-    if (strlen(input) == 0)
-    {
-      for (int i = 0; i < matched; ++i)
-        selected[count++] = i;
-    }
-    else
-    {
-      char *token = strtok(input, ",");
-      while (token && count < matched)
-      {
-        char *dash = strchr(token, '-');
-        if (dash)
-        {
-          *dash = '\0';
-          int start = atoi(token);
-          int end = atoi(dash + 1);
-          if (start > 0 && end >= start)
-          {
-            for (int j = start; j <= end && count < matched; ++j)
-            {
-              int idx = j - 1;
-              if (idx >= 0 && idx < matched)
-                selected[count++] = idx;
-            }
-          }
-        }
-        else
-        {
-          int idx = atoi(token) - 1;
-          if (idx >= 0 && idx < matched)
-            selected[count++] = idx;
-        }
-        token = strtok(NULL, ",");
-      }
-    }
+    select_processes(matched, matches, selected, &count);
   }
   else
   {
     for (int i = 0; i < matched; ++i)
       selected[count++] = i;
   }
-
-  // Confirmation prompt for killing processes (unless auto_confirm)
-  if (args->do_kill && !args->dry_run && !args->auto_confirm && count > 0)
-  {
-    printf("The following processes will be killed (signal %d - %s):\n", args->sig, strsignal(args->sig));
-    for (int i = 0; i < count; ++i)
-    {
-      int idx = selected[i];
-      printf("  PID %d (%s) owned by %s\n", matches[idx].pid, matches[idx].name, matches[idx].owner);
-    }
-    printf("Proceed? [y/N]: ");
-    char confirm[8] = {0};
-    fgets(confirm, sizeof(confirm), stdin);
-    if (confirm[0] != 'y' && confirm[0] != 'Y')
-    {
-      printf("Aborted.\n");
-      return 0;
-    }
-  }
-
-  for (int i = 0; i < count; ++i)
-  {
-    int idx = selected[i];
-    if (args->do_kill && !args->dry_run)
-    {
-      if (kill(matches[idx].pid, args->sig) == 0)
-        printf("Sent signal %d (%s) to PID %d (%s)\n",
-               args->sig, strsignal(args->sig), matches[idx].pid, matches[idx].name);
-      else
-        fprintf(stderr, "Failed to kill PID %d (%s): %s\n",
-                matches[idx].pid, matches[idx].name, strerror(errno));
-    }
-    else if (args->dry_run)
-    {
-      printf("Would send signal %d (%s) to PID %d (%s)\n",
-             args->sig, strsignal(args->sig), matches[idx].pid, matches[idx].name);
-    }
-    else
-    {
-      printf("%d (%s) owned by %s\n", matches[idx].pid, matches[idx].name, matches[idx].owner);
-    }
-  }
+  confirm_and_act(args, count, selected, matches);
   return 0;
 }

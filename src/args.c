@@ -24,9 +24,12 @@ void usage(const char *prog)
           "  -y            : Auto-confirm kills (skip prompt)\n"
           "  -p            : Print raw PIDs only\n"
           "  -s <SIGNAL>   : Signal to send (default TERM)\n"
+          "  -<SIGNAL>     : Shorthand to specify signal (e.g. -9, -KILL)\n"
           "  -u <USER>     : Filter by username\n"
-          "  pattern       : One or more process name patterns\n",
-          prog);
+          "  -v            : Enable verbose output\n"
+          "  pattern       : One or more process name patterns\n"
+          "For more information, please run '%s --help'\n",
+          prog, prog);
 }
 
 void help(const char *prog)
@@ -43,7 +46,9 @@ void help(const char *prog)
       "  -y              Auto-confirm kills; skip prompts and sudo confirmation\n"
       "  -p              Print raw PIDs only\n"
       "  -s <SIGNAL>     Signal to send (name or number, default TERM)\n"
+      "  -<SIGNAL>       Shorthand to specify signal (e.g. -9, -KILL)\n"
       "  -u <USER>       Filter processes by username\n"
+      "  -v              Enable verbose output\n"
       "  --help          Show this help message and exit\n\n"
       "Patterns:\n"
       "  One or more patterns to match process names against.\n"
@@ -102,6 +107,18 @@ int get_signal(const char *sigstr)
 
 int parse_args(int argc, char **argv, swordfish_args_t *args)
 {
+  // Initialize defaults before any argument parsing
+  args->sig_str = "TERM";
+  args->sig = SIGTERM;
+  args->do_kill = false;
+  args->dry_run = false;
+  args->select_mode = false;
+  args->exact_match = false;
+  args->print_pids_only = false;
+  args->auto_confirm = false;
+  args->user = NULL;
+  args->do_verbose = false;
+
   // Check for --help before getopt
   for (int i = 1; i < argc; i++)
   {
@@ -112,18 +129,26 @@ int parse_args(int argc, char **argv, swordfish_args_t *args)
     }
   }
 
-  int opt;
-  args->sig_str = "TERM";
-  args->sig = SIGTERM;
-  args->do_kill = false;
-  args->dry_run = false;
-  args->select_mode = false;
-  args->exact_match = false;
-  args->print_pids_only = false;
-  args->auto_confirm = false;
-  args->user = NULL;
+  // Support -<SIGNAL> as shorthand (e.g. -9, -KILL, -TERM)
+  if (argc > 1 && argv[1][0] == '-' && argv[1][1] && argv[1][1] != '-' &&
+      (isdigit(argv[1][1]) || isalpha(argv[1][1])))
+  {
+    const char *sigstr = argv[1] + 1;
+    int sig = get_signal(sigstr);
+    if (sig != -1)
+    {
+      args->do_kill = true;
+      args->sig = sig;
+      args->sig_str = sigstr;
+      // Remove this arg from argv for getopt
+      for (int i = 1; i < argc - 1; ++i)
+        argv[i] = argv[i + 1];
+      argc--;
+    }
+  }
 
-  while ((opt = getopt(argc, argv, "SNkxyps:u:")) != -1)
+  int opt;
+  while ((opt = getopt(argc, argv, "SNkxyps:u:v")) != -1)
   {
     switch (opt)
     {
@@ -151,6 +176,9 @@ int parse_args(int argc, char **argv, swordfish_args_t *args)
     case 'u':
       args->user = optarg;
       break;
+    case 'v':
+      args->do_verbose = true;
+      break;
     default:
       usage(argv[0]);
       return 2;
@@ -164,7 +192,9 @@ int parse_args(int argc, char **argv, swordfish_args_t *args)
   }
 
   args->pattern_start_idx = optind;
-  args->sig = get_signal(args->sig_str);
+  // Only override sig if not already set by -<SIGNAL>
+  if (!args->do_kill || (args->sig_str && strcmp(args->sig_str, "TERM") == 0))
+    args->sig = get_signal(args->sig_str);
 
   if (args->sig == -1)
   {

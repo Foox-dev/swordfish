@@ -13,6 +13,7 @@ typedef struct
   bool exact_match;
   bool print_pids_only;
   bool auto_confirm;
+  bool do_verbose;
   const char *user;
   int pattern_start_idx;
 } swordfish_args_t;
