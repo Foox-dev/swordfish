@@ -66,22 +66,22 @@ static const char *get_proc_user(uid_t uid) {
         uid_t uid;
         char name[64];
         int set;
-    } uidCache[64];
+    } uid_cache[64];
     static int count = 0;
 
     for (int i = 0; i < count; i++)
-        if (uidCache[i].uid == uid)
-        return uidCache[i].name;
+        if (uid_cache[i].uid == uid)
+            return uid_cache[i].name;
        
     struct passwd *pw = getpwuid(uid);
     const char *name = pw ? pw->pw_name : "unknown";
 
     if (count < 64) {
-        uidCache[count].uid = uid;
-        strncpy(uidCache[count].name, name, 63);
-        uidCache[count].name[63] = '\0';
+        uid_cache[count].uid = uid;
+        strncpy(uid_cache[count].name, name, 63);
+        uid_cache[count].name[63] = '\0';
         count++;
-        return uidCache[count - 1].name;
+        return uid_cache[count - 1].name;
     }
     return name;
 }
