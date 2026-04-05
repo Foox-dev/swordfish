@@ -3,43 +3,43 @@
 #include <stdbool.h>
 
 typedef struct {
-    const char *flag;
-    const char *desc;
+	const char *flag;
+	const char *desc;
 } swordfish_flag_desc_t;
 
 typedef struct {
-    const char *usage;
-    const char *desc;
+	const char *usage;
+	const char *desc;
 } swordfish_usage_example_t;
 
 typedef struct {
-    const char *name;
-    const char *desc;
+	const char *name;
+	const char *desc;
 } swordfish_completion_guide_t;
 
 typedef struct {
-    const char *name;
-    int sig;
+	const char *name;
+	int sig;
 } swordfish_signal_t;
 
 typedef struct {
-    const char *flag;
-    const char *arg;
-    const char *desc;
-    bool common;
-    const char *category;
+	const char *flag;
+	const char *arg;
+	const char *desc;
+	const char *category;
+	bool common;
 } swordfish_option_t;
 
 typedef struct {
-    const char *name;
-    const char *title;
-    const char *description;
+	const char *name;
+	const char *title;
+	const char *description;
 } swordfish_help_category_info_t;
 
 typedef struct {
-    const char *category;
-    const char *short_flag;
-    const char *long_flag;
+	const char *category;
+	const char *short_flag;
+	const char *long_flag;
 } swordfish_option_map_t;
 
 extern const swordfish_option_t swordfish_options[];

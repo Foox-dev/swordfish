@@ -5,7 +5,8 @@
 #define MAX_MATCHES 512
 
 #define COLOR_RESET "\033[0m"
-#define COLOR_YELLOW "\033[33m"
+// ncurses already took "COLOR_YELLOW"...
+#define COLOR_YELLOWL "\033[33m"
 #define COLOR_WARN "\033[1;93m"
 
 #define EXIT_FOUND 0
@@ -24,6 +25,6 @@
     fprintf(stderr, COLOR_WARN "ERROR:" COLOR_RESET " " msg "\n", ##__VA_ARGS__)
 
 #define INFO(msg, ...) \
-    printf(COLOR_YELLOW "INFO:" COLOR_RESET " " msg "\n", ##__VA_ARGS__)
+    printf(COLOR_YELLOWL "INFO:" COLOR_RESET " " msg "\n", ##__VA_ARGS__)
 
 
