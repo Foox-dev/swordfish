@@ -46,7 +46,7 @@ int main(int arg_count, char **argv) {
 		     "dangerous!" COLOR_RESET);
 		printf("Proceed? [y/N]: ");
 		char confirm[8] = {0};
-		fgets(confirm, sizeof(confirm), stdin);
+		(void)fgets(confirm, sizeof(confirm), stdin);
 		if (tolower((unsigned char)confirm[0]) != 'y') {
 			return 1;
 		}

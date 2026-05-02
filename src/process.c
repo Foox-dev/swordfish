@@ -499,7 +499,7 @@ static void select_processes(int matched, process_info_t *matches, int *selected
 
 	printf("Enter numbers (e.g., 1,2,5-7) or leave empty for all: ");
 	char input[256] = {0};
-	fgets(input, sizeof(input), stdin);
+	(void)fgets(input, sizeof(input), stdin);
 	input[strcspn(input, "\n")] = 0;
 
 	if (strlen(input) == 0) {
@@ -554,7 +554,7 @@ static int confirm_and_act(const swordfish_args_t *args, int count, int *selecte
 		printf("Proceed? [y/N]: ");
 
 		char confirm[8] = {0};
-		fgets(confirm, sizeof(confirm), stdin);
+		(void)fgets(confirm, sizeof(confirm), stdin);
 		if (tolower((unsigned char)confirm[0]) != 'y')
 			return EXIT_NO_MATCH;
 	}

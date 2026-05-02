@@ -1,7 +1,7 @@
 CC ?= gcc
 override CFLAGS_DEV = -Wall -Wextra -g -std=gnu11
-override CFLAGS_REL = -Wall -Wextra -Werror -O3 -std=gnu11
-LDLIBS = -lncurses
+override CFLAGS_REL = -Wall -Wextra -O3 -std=gnu11
+LDLIBS = -lncurses -ltinfo
 
 PREFIX ?= /usr/local
 BINDIR = $(PREFIX)/bin
